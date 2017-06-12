@@ -1,0 +1,9 @@
+dirt
+gravel
+sand
+trash
+garbage
+grime
+grease
+soot
+mud

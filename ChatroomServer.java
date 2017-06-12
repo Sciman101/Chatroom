@@ -1,8 +1,10 @@
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.HashSet;
+import java.util.ArrayList;
 import java.io.PrintWriter;
 import java.io.IOException;
+import java.io.FileReader;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 
@@ -13,15 +15,26 @@ public class ChatroomServer {
 	private static HashSet<PrintWriter> writers;
 	private static HashSet<String> usernames;
 
+	//Server properties
+	private static String serverName = "Chatroom Server";
+	private static ArrayList<String> blacklistedPhrases;
+
 	/**
 	* Main program entrypoint
 	*/
 	public static void main(String[] args) throws IOException{
 
+		if (args.length > 0) serverName = args[0];
+
 		ServerSocket listener = new ServerSocket(PORT);
 		writers = new HashSet<PrintWriter>();
 		usernames = new HashSet<String>();
+
+		loadBlacklist();
+
 		System.out.println("Server started on port " + PORT);
+		if (serverName != null)
+			System.out.println("Server name: " + serverName);
 
 		try {
 			while (true) {
@@ -35,6 +48,25 @@ public class ChatroomServer {
 
 	}
 
+	/**
+	* Load all blacklisted phrases
+	*/
+	private static void loadBlacklist() {
+
+		blacklistedPhrases = new ArrayList<String>();
+
+		try {
+			//Create bufferedreader to read blacklisted phrases file
+			BufferedReader reader = new BufferedReader(new FileReader("blacklisted_phrases.txt"));
+			String line;
+			while ((line = reader.readLine()) != null) {
+				blacklistedPhrases.add(line);
+			}
+		}catch (Exception e) {
+			e.printStackTrace();
+		}
+
+	}
 
 	/**
 	* The handler class deals with a single client at a time
@@ -68,19 +100,23 @@ public class ChatroomServer {
 				in = new BufferedReader(new InputStreamReader(mySocket.getInputStream()));
 
 				System.out.println("New user connected, getting username...");
+				out.println("SERVERNAME"+serverName);
 
 				//First, get client username
 				while (true) {
 					out.println("GETUSERNAME");
 					String line = in.readLine();
-					if (line != null) {
+					//Line cannot be empty, in the current username list, or a blacklisted word
+					if (line != null && !usernames.contains(line) && blacklistedPhrases.indexOf(line) == -1) {
 						username = line;//Get username
+						synchronized (usernames) {
+							usernames.add(username);
+						}
 						break;
 					}
 				}
 
 				//Add username and writers
-				usernames.add(username);
 				synchronized (writers) {
 					writers.add(out);
 				}
@@ -112,16 +148,61 @@ public class ChatroomServer {
 
 					}else if (line.startsWith("MESSAGE")) {
 						//Broadcast message to all other clients
-						System.out.println("Message sent by " + username + ": " + line.substring(7));
-						String msg = "MESSAGE<b>[" + username + "]</b> " + line.substring(7);
+
+						//Filter blocked words from message
+						String msg = line.substring(7);
+						String finalMsg = "";
+
+						//Cycle through all words
+						for (String word : msg.split(" ")) {
+							//Check if a word is in the blacklisted message list
+							if (blacklistedPhrases.indexOf(word.toLowerCase().replaceAll("\\<.*?>","")) != -1)
+								for (int i=0;i<word.length();i++)
+									finalMsg += "*";
+							else
+								finalMsg += word;
+							finalMsg += " ";
+						}
+
+						//Print the message header and username, followed by the actual message
 						for (PrintWriter w : writers) {
-							w.println(msg);
+							w.println("MESSAGE" + username);
+							w.println(finalMsg);
 						}
 
 					}else if (line.startsWith("STARTTYPE") || line.startsWith("STOPTYPE")) {
+						//Forward message to start or stop typing
 						for (PrintWriter w : writers) {
 							if (w != out)
 								w.println(line);
+						}
+					}else if (line.startsWith("CHANGENAME")) {
+						//A user wants to change their name..
+						int i = line.indexOf("\\|");
+						String originalName = line.substring(10,i);
+						String newName = line.substring(i+2,line.length());
+
+						//Is that name not allowed?
+						if (usernames.contains(newName) || blacklistedPhrases.indexOf(newName.toLowerCase()) != -1) {
+
+							out.println("BADNAME"+originalName);
+							System.out.println(originalName + " has tried to change their name to " + newName);
+
+						}else{
+
+							synchronized (usernames) {
+								usernames.remove(originalName);
+								usernames.add(newName);
+							}
+
+							username = newName;
+
+							System.out.println(originalName + " has changed their name to " + newName);
+
+							for (PrintWriter w : writers) {
+								w.println("CHANGENAME"+originalName+"\\|"+newName);
+							}
+
 						}
 					}
 

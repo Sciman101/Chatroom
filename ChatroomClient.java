@@ -25,14 +25,16 @@ import javax.swing.event.HyperlinkEvent;
 public class ChatroomClient extends JFrame {
 
 	private static final int PORT = 3030;//Port to use
+	private static final int TYPECHECK_DELAY = 500;
 	
 	//JFrame components
 	private JTextField messageField;
 	private JButton sendButton;
-	private JTextPane messagePane;
-	private JLabel statusLabel;
+	private JTextPane messagePane, userList;
+	private JMenuBar menu;
+	private JMenu userMenu;
+	private JPanel userPanel;
 	private JLabel typingLabel;
-	private JTextPane userList;
 
 	//Networking components
 	private Socket mySocket;
@@ -41,11 +43,14 @@ public class ChatroomClient extends JFrame {
 
 	private boolean connected;
 	private String username;
+	private String serverName;
 
 	private HashSet<String> usernames;
 	private ArrayList<String> typingUsers;
 
 	private boolean isTyping;
+	private TypeTimer timer;
+	private int lastType = 0;
 
 	/**
 	 * Create a new chatroom object
@@ -57,12 +62,16 @@ public class ChatroomClient extends JFrame {
 		setTitle("Chatroom - Disconnected");
 		setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
 		
+		//Initialize all the JFrame stuff
 		initComponents();
 		
 		setVisible(true);
 
 		usernames = new HashSet<String>();
 		typingUsers = new ArrayList<String>();
+
+		timer = new TypeTimer();
+		timer.start();
 
 		//Initialize networking components
 		run();
@@ -77,17 +86,20 @@ public class ChatroomClient extends JFrame {
 		messageField = new JTextField("");
 		sendButton = new JButton("Send");
 		messagePane = new JTextPane();
-		statusLabel = new JLabel("Disconnected");
 		typingLabel = new JLabel();
 		userList = new JTextPane();
+
+		menu = new JMenuBar();
 		
+		//Configure user list and message pane
 		userList.setEditable(false);
 		userList.setBorder(new CompoundBorder(new BevelBorder(0), new BevelBorder(1)));
 		messagePane.setContentType("text/html");
+		messagePane.setText("<html>");
 		messagePane.setEditable(false);
 		messagePane.setBorder(new CompoundBorder(new BevelBorder(0), new BevelBorder(1)));
 
-		//Create action listener
+		//Create action listener for sending messages
 		ActionListener al = new ActionListener() {
 			public void actionPerformed(ActionEvent e) {
 				String msg = messageField.getText();
@@ -96,21 +108,86 @@ public class ChatroomClient extends JFrame {
             }
 		};
 
-		//Create key listener
+		//Create key listener for showing typing message
 		messageField.addKeyListener(new KeyAdapter() {
 			@Override
 		    public void keyTyped(KeyEvent e) {
-		    	if (e.getKeyChar() == KeyEvent.VK_BACK_SPACE) {
-		    		setIsTyping(false);
-		    	}else if (!isTyping) {
-			        setIsTyping(true);
-		    	}
+		    	if (e.getKeyChar() != KeyEvent.VK_ENTER)
+			    	setIsTyping(true);
 		    }
 		});
 
+		//Add hyperlink listener so that we can open hyperlinks
+		//https://stackoverflow.com/a/3693604 Credit for code
+		messagePane.addHyperlinkListener(new HyperlinkListener() {
+		    public void hyperlinkUpdate(HyperlinkEvent e) {
+		        if(e.getEventType() == HyperlinkEvent.EventType.ACTIVATED) {
+		        	//If the desktop is a supported function...
+		           if(Desktop.isDesktopSupported()) {
+			           	try {
+			           		//Open that URL
+						    Desktop.getDesktop().browse(e.getURL().toURI());
+						}catch (Exception ex) {
+			          		ex.printStackTrace();
+						}
+					}
+		        }
+		    }
+		});
+
+		//Apply send button action listener to appropriate objects
 		sendButton.addActionListener(al);
 		messageField.addActionListener(al);
+
+
+		//Configure menu bar
+		userMenu = new JMenu("Disconnected");
+		menu.add(userMenu);
+
+		JMenuItem itemName = new JMenuItem("Change Name");
+		JMenuItem itemDC = new JMenuItem("Disconnect");
+
+		userMenu.add(itemDC);
+		userMenu.add(itemName);
+
+		//Add action listener to change name
+		itemName.addActionListener(new ActionListener() {
+			public void actionPerformed(ActionEvent e) {
+				//Send out username
+				String newUsername = getString("Enter user name:");
+				out.println("CHANGENAME"+username+"\\|"+newUsername);
+				username = newUsername;
+				//Update menu so that we show we're connected and what our name is
+				updateMenu();
+			}
+		});
+
+		//Add action listener to disconnect
+		itemDC.addActionListener(new ActionListener() {
+			public void actionPerformed(ActionEvent e) {
+				disconnect();
+			}
+		});
+
+		//Create formatting menu
+		JMenu formatMenu = new JMenu("Format");
+		menu.add(formatMenu);
+
+		JMenuItem itemItalic = new JMenuItem("Italics");
+		JMenuItem itemBold = new JMenuItem("Bold");
+		JMenuItem itemHeader = new JMenuItem("Header");
+
+		formatMenu.add(itemItalic);
+		formatMenu.add(itemBold);
+		formatMenu.add(itemHeader);
+
+		//Create formatting action listeners
+		itemItalic.addActionListener(new ActionListener() {public void actionPerformed(ActionEvent e) {formatSelection(0);}});
+		itemBold.addActionListener(new ActionListener() {public void actionPerformed(ActionEvent e) {formatSelection(1);}});
+		itemHeader.addActionListener(new ActionListener() {public void actionPerformed(ActionEvent e) {formatSelection(2);}});
 		
+		//------------------------------------------------------------------------------------------------------------------------
+
 		//Add elements to jframe
 		JPanel messagePanel = new JPanel();
 		messagePanel.setLayout(new BorderLayout());
@@ -128,28 +205,35 @@ public class ChatroomClient extends JFrame {
 		getContentPane().add(messagePanel,BorderLayout.SOUTH);
 		getContentPane().add(userPanel, BorderLayout.EAST);
 		getContentPane().add(new JScrollPane(messagePane), BorderLayout.CENTER);
-		getContentPane().add(statusLabel, BorderLayout.NORTH);
+		getContentPane().add(menu, BorderLayout.NORTH);
 
 
-		//Add on close window listener
+		//Add on close window listener to disconnect from server
 		addWindowListener(new WindowAdapter(){
             public void windowClosing(WindowEvent e){
-            	if (connected) {
-	                int i = JOptionPane.showConfirmDialog(null, "Disconnect?");
-	                if(i==0) {
-	                	//Disconnect and close client
-	                	out.println("DISCONNECT"+username);
-	                	dispose();
-	                    System.exit(0);
-	                }
-            	}else{
-            		//No need to DC, just close
-            		dispose();
-	                System.exit(0);
-            	}
+            	disconnect();
             }
         });
 		
+	}
+
+	/**
+	* Disconnect the user from the server
+	*/
+	private void disconnect() {
+		if (connected) {
+            int i = JOptionPane.showConfirmDialog(null, "Disconnect?");
+            if(i==0) {
+            	//Disconnect and close client
+            	out.println("DISCONNECT"+username);
+            	dispose();
+                System.exit(0);
+            }
+    	}else{
+    		//No need to DC, just close
+    		dispose();
+            System.exit(0);
+    	}
 	}
 
 	/**
@@ -161,17 +245,10 @@ public class ChatroomClient extends JFrame {
 		if (msg.length() > 2000) {
 			printMessage(username + ", keep messages under 2000 characters to be courteous to others!",2);
     	}else{
-    		//Is the message a hyperlink?
-    		try {
-    			URL url = new URL(msg);
-    			msg = "<a href=\""+msg+"\">"+msg+"</a>";//TODO Make this actually work
-    		}catch (Exception e) {
-    			//It's not a hyperlink
-    		}
-
     		//Send message to other clients and clear text box
     		out.println("MESSAGE"+msg);
         	messageField.setText("");
+        	setIsTyping(false);
     	}
 	}
 
@@ -188,14 +265,66 @@ public class ChatroomClient extends JFrame {
 	}
 
 	/**
+	* Format text in the message box
+	* @param type The type of formatting to apply
+	*/
+	private void formatSelection(int type) {
+
+		int startPoint = messageField.getSelectionStart();
+		int endPoint = messageField.getSelectionEnd();
+		//Format text
+		if (startPoint != endPoint) {
+
+			String formatType = "";
+			switch (type) {
+				case 0: formatType = "i"; break;
+				case 1: formatType = "b"; break;
+				case 2: formatType = "h1"; break;
+			}
+
+			//Get message
+			String full = messageField.getText();
+
+			String start = full.substring(0,startPoint);
+			String end = full.substring(endPoint,full.length());
+			String select = full.substring(startPoint,endPoint);
+
+			if (formatType.length() > 0) {
+				messageField.setText(start + "<" + formatType + ">" + select + "</" + formatType + ">" + end);
+				messageField.setSelectionStart(startPoint);
+				messageField.setSelectionEnd(endPoint+5+(formatType.length()*2));
+			}else{
+				printMessage("Please select text to format!",2);
+			}
+
+		}
+
+	}
+
+	/**
 	* Start client
 	*/
 	private void run() throws IOException {
 
-		String ip = getString("Enter ip address:");
-		if (ip.length() <= 0) ip = "127.0.0.1";
-		mySocket = new Socket(ip,PORT);
+		String ip;
+		while (true) {
+			//Wait until we get an actual, valid ip
+			try {
+				//Get the ip address to connect to
+				ip = getString("Enter ip address:");
+				//If the ip isn't present, substitute our local address
+				if (ip.length() <= 0) ip = "127.0.0.1";
+				//Initialize socket
+				mySocket = new Socket(ip,PORT);
 
+				break;
+			}catch (Exception e) {
+				System.out.println("Error: invalid IP address");
+			}
+		}
+		
+
+		//Initialize stream handlers
 		out = new PrintWriter(mySocket.getOutputStream(),true);
 		in = new BufferedReader(new InputStreamReader(mySocket.getInputStream()));
 
@@ -204,45 +333,97 @@ public class ChatroomClient extends JFrame {
 		while (connected) {
 
 			String line = in.readLine();
-			if (line == null) continue;
+			if (line == null) continue;//Skip empty lines
 
+			//Based on the message header (the first word in the message), handle the message differently
 			if (line.startsWith("GETUSERNAME")) {
 				//Send out username
 				username = getString("Enter user name:");
 				out.println(username);
-				//Update display so that we show we're connected and what our name is
-				updateConnectionLabel();
+				//Update menu so that we show we're connected and what our name is
+				updateMenu();
+
+			}else if (line.startsWith("SERVERNAME")) {
+				//Get server name
+				serverName = line.substring(10);
+				updateMenu();
 
 			}else if (line.startsWith("USERLIST")) {
 				//Get list of users
 				String[] list = line.substring(8).split("\\|");
 				for (String n : list)
 					usernames.add(n);
-				updateNameDisplay();
+				updateNameList();
 
 			}else if (line.startsWith("NEWUSER")) {
 				//We've got a new user
 				String name = line.substring(7);
 				usernames.add(name);
-				updateNameDisplay();
+				updateNameList();
 				printMessage(name + " has joined the server",1);
+
+			}else if (line.startsWith("CHANGENAME")) {
+				//Change the username of a person
+				int i = line.indexOf("\\|");
+				String originalName = line.substring(10,i);
+				String newName = line.substring(i+2,line.length());
+
+				usernames.remove(originalName);
+				usernames.add(newName);
+
+				updateNameList();
+
+				printMessage(originalName + " has changed their name to " + newName,2);
+
+			}else if (line.startsWith("BADNAME")) {
+				//We tried to change our names to something not allowed
+				username = line.substring(7);
+				//Show a warning
+				printMessage(username + ", that username is not allowed",2);
+				//Update menu so that we show we're connected and what our name is
+				updateMenu();
 
 			}else if (line.startsWith("DISCONNECT")) {
 				//Disconnect user
 				String name = line.substring(10);
 				usernames.remove(name);
-				updateNameDisplay();
+				updateNameList();
 				printMessage(name + " has left the server",1);
 
 			}else if (line.startsWith("MESSAGE")) {
-				//Print message!
-				printMessage(line.substring(7),0);
+				//Handle incoming message
+				String user = line.substring(7);//Username is sent first along with message identifier
+				String msg = in.readLine();//Message is sent next
+
+				String finalMsg = "";
+				//Cycle through every word and test if it's a hyperlink
+				for (String word : msg.split(" ")) {
+					try {
+					//Is the message recieved a hyperlink?
+					URL url = new URL(word);
+
+					//Append link to message
+					finalMsg += "<a href=\""+word+"\">"+word+"</a> ";
+
+					}catch (Exception e) {
+
+						finalMsg += word + " ";
+
+					}
+				}
+
+				//Print message normally
+				printMessage(user,finalMsg,0);
 
 			}else if (line.startsWith("STARTTYPE")) {
-				typingUsers.add(line.substring(9));
+				//A user has started to type
+				String user = line.substring(9);
+				if (typingUsers.indexOf(user) == -1)
+					typingUsers.add(line.substring(9));
 				updateTypingLabel();
 
 			}else if (line.startsWith("STOPTYPE")) {
+				//A user has stopped typing
 				typingUsers.remove(line.substring(8));
 				updateTypingLabel();
 			}
@@ -252,11 +433,22 @@ public class ChatroomClient extends JFrame {
 
 	}
 
+	/**
+	* Set whether the client is typing or not
+	* @param typing If we're typing or not
+	*/
 	private void setIsTyping(boolean typing) {
 		isTyping = typing;
-		out.println((typing ? "STARTTYPE" : "STOPTYPE") + username);
+		out.println((typing ? "START" : "STOP") + "TYPE" + username);
+		if (typing) {
+			lastType = (int)System.currentTimeMillis();
+		}
+		//We don't update the label since we don't see text for this anyways
 	}
 
+	/**
+	* Update the JLabel that says if a user is typing or not
+	*/
 	private void updateTypingLabel() {
 		if (typingUsers.size() == 0) {
 			typingLabel.setVisible(false);
@@ -274,7 +466,7 @@ public class ChatroomClient extends JFrame {
 					else if (i == size-2)
 						txt += " and ";
 				}
-				txt += "are";
+				txt += " are";
 			}
 			txt += " typing";
 			typingLabel.setText(txt);
@@ -298,16 +490,25 @@ public class ChatroomClient extends JFrame {
 
 	/**
 	* Print a message to the message log
+	* @param usr The user who sent the message
 	* @param msg The message to append
 	* @param style Set to an int between 0-2 to determine stylization of message
 	*/
-	private void printMessage(String msg, int style) {
+	private void printMessage(String usr,String msg, int style) {
 		if (style == 1) msg = "<b>"+msg+"</b>";
 		if (style == 2) msg = "<i>"+msg+"</i>";
-		append(messagePane,msg+"<br>");
+		if (usr.length() != 0) usr = "<b>["+usr+"]</b> ";
+		append(messagePane,usr+msg+"<br>");
+	}
+	//Override that doesn't require username
+	private void printMessage(String msg, int style) {
+		printMessage("",msg,style);
 	}
 
-	private void updateNameDisplay() {
+	/**
+	* Update the list of usernames connected to the server
+	*/
+	private void updateNameList() {
 		String txt = "";
 		for (String n : usernames)
 			txt += n + "\n";
@@ -315,11 +516,30 @@ public class ChatroomClient extends JFrame {
 	}
 
 	/**
-	* Update the labels to say if we're connected or not
+	* Update the menu to say if we're connected or not
 	*/
-	private void updateConnectionLabel() {
-		statusLabel.setText(connected ? "Connected as " + username : "Disconnected");
-		setTitle("Chatroom - " + (connected ? "Connected" : "Disconnected"));
+	private void updateMenu() {
+		userMenu.setText(connected ? (username != null && username.length() > 0 ? username : "No Name") : "Disconnected");
+		setTitle((serverName != null ? serverName : "Unnamed Chatroom") + " - " + userMenu.getText());
+	}
+
+	//Simple hidden class to hide the 'User is typing' message after an amount of time
+	private class TypeTimer extends Thread {
+		public void run() {
+
+			try {
+				while (true) {
+					sleep(TYPECHECK_DELAY);
+					if (isTyping && (int)System.currentTimeMillis() - lastType > TYPECHECK_DELAY) {
+						setIsTyping(false);
+					}
+				}
+			}catch (Exception e) {
+				e.printStackTrace();
+			}
+
+		}
+
 	}
 
 	/**
