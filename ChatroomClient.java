@@ -222,8 +222,8 @@ public class ChatroomClient extends JFrame {
 	*/
 	private void disconnect() {
 		if (connected) {
-            int i = JOptionPane.showConfirmDialog(null, "Disconnect?");
-            if(i==0) {
+            int i = JOptionPane.showConfirmDialog(null, "Disconnect?","Disconnect?",JOptionPane.YES_NO_OPTION);
+            if(i==JOptionPane.YES_OPTION) {
             	//Disconnect and close client
             	out.println("DISCONNECT"+username);
             	dispose();
