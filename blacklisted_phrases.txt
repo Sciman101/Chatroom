@@ -7,3 +7,5 @@ grime
 grease
 soot
 mud
+dust
+stains

@@ -25,7 +25,7 @@ import javax.swing.event.HyperlinkEvent;
 public class ChatroomClient extends JFrame {
 
 	private static final int PORT = 3030;//Port to use
-	private static final int TYPECHECK_DELAY = 500;
+	private static final int TYPECHECK_DELAY = 500;//How long to check between keystrokes if the user is typing
 	
 	//JFrame components
 	private JTextField messageField;
@@ -244,7 +244,7 @@ public class ChatroomClient extends JFrame {
 		//Is the message obscenely long?
 		if (msg.length() > 2000) {
 			printMessage(username + ", keep messages under 2000 characters to be courteous to others!",2);
-    	}else{
+    	}else if (msg.length() > 0) {
     		//Send message to other clients and clear text box
     		out.println("MESSAGE"+msg);
         	messageField.setText("");
