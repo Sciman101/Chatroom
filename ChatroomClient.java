@@ -10,17 +10,16 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.net.Socket;
 import java.net.URL;
-import java.io.PrintWriter;
-import java.io.IOException;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
+import java.io.*;
 import javax.swing.text.html.*;
 import javax.swing.event.HyperlinkListener;
 import javax.swing.event.HyperlinkEvent;
 
 
-/*
+/**
  * Class declaration for a chatroom client object
+ * Initializes JFrame and connects socket
+ * @author Yali Izzo
  */
 public class ChatroomClient extends JFrame {
 
