@@ -57,7 +57,7 @@ public class ChatroomServer {
 
 		try {
 			//Create bufferedreader to read blacklisted phrases file
-			BufferedReader reader = new BufferedReader(new FileReader("blacklisted_phrases.txt"));
+			BufferedReader reader = new BufferedReader(new FileReader("data/blacklisted_phrases.txt"));
 			String line;
 			while ((line = reader.readLine()) != null) {
 				blacklistedPhrases.add(line);
